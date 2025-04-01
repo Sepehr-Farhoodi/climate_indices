@@ -19,6 +19,7 @@ class Distribution(Enum):
 
     pearson = "pearson"
     gamma = "gamma"
+    beta = "beta"
 
 
 # Retrieve logger and set desired logging level
@@ -191,7 +192,26 @@ def spi(
             scales,
             skews,
         )
+    elif distribution == Distribution.beta:
+        # get (optional) fitting parameters if provided
+        if fitting_params is not None:
+            alpha = fitting_params["alpha"]
+            beta = fitting_params["beta"]
+        else:
+            alpha = None
+            beta = None
 
+        # fit the scaled values to a beta distribution
+        # and transform to corresponding normalized sigmas
+        values = compute.transform_fitted_beta(
+            values,
+            data_start_year,
+            calibration_year_initial,
+            calibration_year_final,
+            periodicity,
+            alpha,
+            beta,
+        )
     else:
         message = f"Unsupported distribution argument: '{distribution}'"
         _logger.error(message)
@@ -332,6 +352,27 @@ def spei(
             locs,
             scales,
             skews,
+        )
+
+    elif distribution is Distribution.beta:
+        # get (optional) fitting parameters if provided
+        if fitting_params is not None:
+            alpha = fitting_params["alpha"]
+            beta = fitting_params["beta"]
+        else:
+            alpha = None
+            beta = None
+
+        # fit the scaled values to a beta distribution
+        # and transform to corresponding normalized sigmas
+        transformed_fitted_values = compute.transform_fitted_beta(
+            scaled_values,
+            data_start_year,
+            calibration_year_initial,
+            calibration_year_final,
+            periodicity,
+            alpha,
+            beta,
         )
 
     else:

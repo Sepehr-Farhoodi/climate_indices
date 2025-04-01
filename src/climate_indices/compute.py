@@ -829,3 +829,97 @@ def transform_fitted_gamma(
     # as determined by the normal distribution's quantile (or inverse
     # cumulative distribution) function
     return scipy.stats.norm.ppf(probabilities)
+
+
+def transform_fitted_beta(
+    values: np.ndarray,
+    data_start_year: int,
+    calibration_year_initial: int,
+    calibration_year_final: int,
+    periodicity: Periodicity,
+    alpha: np.ndarray = None,
+    beta: np.ndarray = None,
+) -> np.ndarray:
+    """
+    Fit values to a Beta distribution and transform the values to corresponding
+    normalized sigmas.
+    
+    :param values: 2-D array of values, with each row representing a year
+    :param data_start_year: initial year of the input dataset
+    :param calibration_year_initial: initial year of the calibration period
+    :param calibration_year_final: final year of the calibration period
+    :param periodicity: the type of time series represented by the input data
+    :param alpha: optional array of pre-computed alpha parameters
+    :param beta: optional array of pre-computed beta parameters
+    :return: array of transformed/fitted values
+    """
+    # validate the input array
+    values = _validate_array(values, periodicity)
+    
+    # if we're passed all missing values then we can't compute anything
+    if np.all(np.isnan(values)):
+        return values
+        
+    # ensure values are within [0,1] with a small buffer to avoid edge cases
+    # values = np.clip(values, 0.01, 0.99)
+    
+    # compute the fitting parameters if they're not provided
+    if alpha is None or beta is None:
+        # get the subset of values for the calibration period
+        calibration_years = calibration_year_final - calibration_year_initial + 1
+        calibration_start_index = calibration_year_initial - data_start_year
+        calibration_end_index = calibration_start_index + calibration_years
+        calibration_values = values[calibration_start_index:calibration_end_index]
+        
+        # compute the distribution parameters for each time step
+        alpha = np.zeros(values.shape[1])
+        beta = np.zeros(values.shape[1])
+        for time_step_index in range(values.shape[1]):
+            # get the values for the current time step
+            time_step_values = calibration_values[:, time_step_index]
+            
+            # remove NaN values
+            time_step_values = time_step_values[~np.isnan(time_step_values)]
+            
+            if time_step_values.size > 0:
+                # estimate beta distribution parameters using method of moments
+                mean = np.mean(time_step_values)
+                variance = np.var(time_step_values)
+                
+                if variance < 0.00001 or mean == 0 or mean == 1:
+                    # handle degenerate cases
+                    alpha[time_step_index] = np.nan
+                    beta[time_step_index] = np.nan
+                else:
+                    # beta distribution parameter estimation
+                    temp = mean * (1 - mean) / variance - 1
+                    alpha[time_step_index] = max(mean * temp, 0.5)  # ensure positive and not too small
+                    beta[time_step_index] = max((1 - mean) * temp, 0.5)  # ensure positive and not too small
+            else:
+                alpha[time_step_index] = np.nan  
+                beta[time_step_index] = np.nan
+    
+    # fit the values to the beta distribution
+    probabilities = np.full(values.shape, np.nan)
+
+    for time_step_index in range(values.shape[1]):
+        if not np.isnan(alpha[time_step_index]) and not np.isnan(beta[time_step_index]):
+            probabilities[:, time_step_index] = scipy.stats.beta.cdf(
+                values[:, time_step_index],
+                alpha[time_step_index],
+                beta[time_step_index]
+            )
+    
+    # clip probabilities to avoid infinite values in ppf
+    # only for non-NaN values
+    valid_mask = ~np.isnan(probabilities)
+    probabilities[valid_mask] = np.clip(probabilities[valid_mask], 0.001, 0.999)
+    
+    # convert the probabilities to standard normal values
+    transformed = scipy.stats.norm.ppf(probabilities)  # NaNs will propagate
+    
+    # clip only valid values
+    valid_mask = ~np.isnan(transformed)
+    transformed[valid_mask] = np.clip(transformed[valid_mask], -3.09, 3.09)
+    
+    return transformed
